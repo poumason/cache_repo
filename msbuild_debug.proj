@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+MSBuild 內建的 Tasks 的參考網址 : https://docs.microsoft.com/en-us/visualstudio/msbuild/msbuild-task-reference
+MSBuild CommunityTasks 額外增加的Tasks參考網址，請翻原始碼 : https://github.com/loresoft/msbuildtasks
+-->
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
+        <SolutionTarget Condition="'$(SolutionTarget)' == ''">ReBuild</SolutionTarget>
+        <OutputDir>./App/KKBOX.UWP/AppPackages/</OutputDir>
+        <SetupOutDir>./Installation/out/</SetupOutDir>
+        <MoveAppxFileBatFile>./move_appx_file.bat</MoveAppxFileBatFile>
+        <VersionFile>./App/KKBOX.UWP/JenkinsVersion.cs</VersionFile>
+        <BuildNumberOutputFile>./Installation/BuildNumber.txt</BuildNumberOutputFile>
+        <VersionOutputFile>./Installation/VersionString.txt</VersionOutputFile>
+        <KKPackageFile>./App/KKBOX.UWP/Package.appxmanifest</KKPackageFile>
+        <LocalizedFolder>./App/KKBOX.UWP/Strings</LocalizedFolder>
+        <UWPMobileInstallFile>./Installation/out/kkbox_win10mobile_install.bat</UWPMobileInstallFile>
+        <UWPMobileUpdateFile>./Installation/out/kkbox_win10mobile_update.bat</UWPMobileUpdateFile>
+        <UWPMobileProjectName>KKBOX.UWP</UWPMobileProjectName>
+        <AppProject>./APP/KKBOX.UWP/KKBOX.UWP.csproj</AppProject>
+        <AppProjectFolder>./APP/KKBOX.UWP/</AppProjectFolder>
+    </PropertyGroup>
+
+    <Import Project="$(MSBuildExtensionsPath)\MSBuildCommunityTasks\MSBuild.Community.Tasks.Targets"/>
+
+    <Target Name="ClearDllAndPdb">
+        <ItemGroup>
+            <SetupZipFiles Include="$(SetupOutDir)*.zip" />
+            <SetupXmlFiles Include="$(SetupOutDir)*.xml" />
+            <AdditionalAppxFiles Include="$(AppProjectFolder)\*.appx" />
+        </ItemGroup>
+        <Delete Files="@(SetupZipFiles)" />
+        <Delete Files="@(SetupXmlFiles)" />
+        <DeleteTree Directories="$(OutputDir)" />
+        <DeleteTree Directories="$(AppProjectFolder)\bin" />
+        <DeleteTree Directories="$(AppProjectFolder)\obj" />
+        <Delete Files="@(AdditionalAppxFiles)" />
+    </Target>
+
+    <Target Name="IncreaseBuildNumber">
+        <Exec Command="cscript IncreaseBuildNumber.js $(BUILD_NUMBER) $(VersionFile) $(BuildNumberOutputFile)"/>
+        <Exec Command="cscript GetVersion.js $(KKPackageFile) $(VersionOutputFile) WINDOWS_APP"/>
+        <CallTarget Targets="GetVersion"/>
+        <CallTarget Targets="GetBuildNumber"/>
+    </Target>
+
+    <Target Name="GetVersion">
+        <ReadLinesFromFile File="$(VersionOutputFile)" >
+            <Output TaskParameter="Lines" ItemName="VersionString" />
+        </ReadLinesFromFile>
+        <Message Text="VersionString=@(VersionString)"/>
+        <Error Text="Version String is empty" Condition="@(VersionString) == ''"/>
+    </Target>
+
+    <Target Name="GetBuildNumber">
+        <ReadLinesFromFile File="$(BuildNumberOutputFile)" >
+            <Output TaskParameter="Lines" ItemName="BuilderNumberString" />
+        </ReadLinesFromFile>
+        <Message Text="BuilderNumberString=@(BuilderNumberString)"/>
+        <Error Text="BuilderNumber String is empty" Condition="@(BuilderNumberString) == ''"/>
+    </Target>
+
+    <Target Name="RestoreNuGetPackage">
+        <Exec Command="msbuild $(AppProject) /t:restore" />
+    </Target>
+
+    <Target Name="BuildSolution">
+        <MSBuild Projects="$(AppProject)" Properties="Configuration=$(Configuration)" StopOnFirstFailure="true" Targets="$(SolutionTarget)" />
+    </Target>
+
+    <Target Name="CreateMobileInstallFiles">
+        <Exec Command="cscript CreateInstallFile.js $(UWPMobileInstallFile) $(UWPMobileUpdateFile) @(VersionString) $(Configuration) $(UWPMobileProjectName)"/>
+    </Target>
+
+    <Target Name="ZipPackage">
+        <CreateItem Include="$(OutputDir)\**" >
+            <Output ItemName="ZipFiles" TaskParameter="Include"/>
+        </CreateItem>
+        <Zip ZipFileName="$(SetupOutDir)KKBOX.UWP_@(VersionString)_build_@(BuilderNumberString)_dev_$(Configuration).zip"
+             WorkingDirectory="$(OutputDir)" Files="@(ZipFiles)" ZipLevel="9" />
+    </Target>
+
+    <Target Name="ChangeOutputFileName">
+        <Exec Command="cscript ChangeOutputFileName.js $(BuildNumberOutputFile) $(SetupOutDir)KKBOX.UWP_@(VersionString)_@(BuilderNumberString)_x86_x64_arm_bundle_dev.appxupload"/>
+    </Target>
+
+    <Target Name="CopyWithRenameLocalizedFiles">
+        <Exec Command="cscript OutputLocailzedStrings.js $(LocalizedFolder) $(SetupOutDir)"/>
+    </Target>
+
+    <Target Name="Build">
+        <CallTarget Targets="ClearDllAndPdb" />
+        <CallTarget Targets="IncreaseBuildNumber" />
+        <CallTarget Targets="RestoreNuGetPackage" />
+        <CallTarget Targets="BuildSolution" />
+        <CallTarget Targets="CreateMobileInstallFiles" />
+        <Exec Command="$(MoveAppxFileBatFile)" />
+        <CallTarget Targets="ZipPackage" />
+        <!-- <CallTarget Targets="ChangeOutputFileName" />  -->
+        <CallTarget targets="CopyWithRenameLocalizedFiles" />
+    </Target>
+</Project>
