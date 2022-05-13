@@ -1,0 +1,160 @@
+stages:
+  - build
+  - test
+  - deploy
+
+before_script:    
+  - 'which ssh-agent || ( apt-get update -y && apt-get install openssh-client -y )'
+  - eval $(ssh-agent -s)
+  - echo "$SSH_PRIVATE_KEY" | ssh-add -
+  - GIT_SSH_COMMAND='ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no'
+  - git config --global user.email "willyliu@kkbox.com"
+  - git config --global user.name "Willy Liu"
+  # App Center basic parameters
+  - OWNER_NAME="KKBOX-Technologies-Limited-Taiwan-Branch-Organization"
+  - echo $APP_CENTER_API_TOKEN
+  - BUILD_VERSION='3.0.8'
+  - BUILD_NUMBER=$((CI_PIPELINE_IID + 2100000))
+  - echo $BUILD_VERSION+$BUILD_NUMBER
+  - export RELEASE_NOTE=""
+  - if [ "$CI_COMMIT_BEFORE_SHA" == "0000000000000000000000000000000000000000" ]; then echo "match default SHA."; else RELEASE_NOTE=$(git log --pretty=format:"- %s" $CI_COMMIT_SHA ^"$CI_COMMIT_BEFORE_SHA"^); fi
+  - echo $RELEASE_NOTE
+  - echo $SLACK_WEBHOOKS
+
+build_debug_apk:
+  stage: build
+  image: cirrusci/flutter:stable
+  script:  
+    - flutter pub get
+    - printf "$BUILD_NUMBER"
+    - flutter build apk --debug --build-number="$BUILD_NUMBER" -v
+    - cp build/app/outputs/apk/debug/app-debug.apk _out/kktix_"$BUILD_NUMBER"_debug.apk
+    - echo "$BUILD_NUMBER" > _out/_buildnumber
+  artifacts:
+    name: "debug_kktix_${BUILD_NUMBER}"
+    paths:
+      - _out/
+  tags:
+    - docker
+
+build_release_apk:
+  stage: build
+  image: cirrusci/flutter:stable
+  script:
+    - flutter pub get
+    - flutter build apk --build-number="$BUILD_NUMBER" -v
+    - cp build/app/outputs/apk/release/app-release.apk _out/kktix_"$BUILD_NUMBER"_release.apk 
+    - echo "$BUILD_NUMBER" > _out/_buildnumber
+  artifacts:
+    name: "release_kktix_$((CI_PIPELINE_IID + 2100000))"
+    paths:
+      - _out/
+  only:
+    - master
+  tags:
+    - docker
+
+build_ios_for_podfile_lock_changes:
+  stage: build
+  script:
+    - export FASTLANE_DISABLE_COLORS=1
+    - export
+    - pod repo update
+    - flutter packages get
+    - flutter clean
+    - flutter build ios --debug --no-codesign --build-number="$BUILD_NUMBER-inhouse"
+  except:
+    refs:
+    - master
+  only:
+    changes:
+      - ios/Podfile.lock
+  tags:
+    - runner-mac
+
+build_ios_in_house:
+  stage: build
+  script:
+    - export FASTLANE_DISABLE_COLORS=1
+    - export
+    - pod repo update
+    - flutter packages get
+    - flutter clean
+    - flutter build ios --debug --no-codesign --build-number="$BUILD_NUMBER-inhouse"
+    - cd iOS
+    - fastlane release_in_house
+    - IPA="kktix_flutter_${BUILD_NUMBER}_InHouse.ipa"
+    - DSYM="kktix_flutter_${BUILD_NUMBER}_InHouse.app.dSYM.zip"
+    - mv Runner.ipa $IPA
+    - mv Runner.app.dSYM.zip $DSYM
+    - cd ..
+    - APP_NAME="KKTIX-Flutter-iOS-InHouse"
+    - chmod u+x ./app_center_deploy_slack.sh
+    - IPA="./iOS/${IPA}"
+    # build_version, build_number, owner_name, app_name, token, file path, release note
+    - ./app_center_deploy_slack.sh $BUILD_VERSION $BUILD_NUMBER $OWNER_NAME $APP_NAME $APP_CENTER_API_TOKEN $IPA "${RELEASE_NOTE}" "${SLACK_WEBHOOKS}"
+  artifacts:
+    paths:
+      - iOS/kktix_flutter_$((CI_PIPELINE_IID + 2100000))_InHouse.*
+  only:
+    - master
+  tags:
+    - runner-mac
+
+build_ios_appstore:
+  stage: build
+  script:
+    - export FASTLANE_DISABLE_COLORS=1
+    - export
+    - pod repo update
+    - flutter packages get
+    - flutter clean
+    - flutter build ios --release --no-codesign --build-number="$BUILD_NUMBER-appstore"
+    - cd iOS
+    - fastlane release_app_store
+    - echo "Building for app store done"
+    - IPA="kktix_flutter_${BUILD_NUMBER}_AppStore.ipa"
+    - DSYM="kktix_flutter_${BUILD_NUMBER}_AppStore.app.dSYM.zip"
+    - mv Runner.ipa $IPA
+    - mv Runner.app.dSYM.zip $DSYM
+    - cd ..
+    - APP_NAME="KKTIX-Flutter-iOS-AppStore"
+    - chmod u+x ./app_center_deploy_slack.sh
+    - IPA="./iOS/${IPA}"
+    # build_version, build_number, owner_name, app_name, token, file path, release note
+    - ./app_center_deploy_slack.sh $BUILD_VERSION $BUILD_NUMBER $OWNER_NAME $APP_NAME $APP_CENTER_API_TOKEN $IPA "${RELEASE_NOTE}" "${SLACK_WEBHOOKS}"
+  artifacts:
+    paths:
+      - iOS/kktix_flutter_$((CI_PIPELINE_IID + 2100000))_AppStore.*
+  only:
+    - master
+  tags:
+    - runner-mac
+
+test:
+  stage: test
+  image: cirrusci/flutter:stable
+  script:
+    - flutter pub get
+    - flutter test --coverage
+    - lcov --list coverage/lcov.info
+    - genhtml coverage/lcov.info --output=coverage
+  artifacts:
+    paths:
+      - coverage
+  tags:
+    - docker
+
+deploy:
+  stage: deploy
+  image: gitlab.kkinternal.com:4567/add/kktix:latest
+  script:
+    - sudo chmod +x ./app_center_deploy_slack.sh
+    - APP_NAME="KKTIX-Flutter-Android-Release"
+    - IPA="./_out/kktix_${BUILD_NUMBER}_release.apk"
+    # build_version, build_number, owner_name, app_name, token, file path, release note
+    - sudo sh ./app_center_deploy_slack.sh $BUILD_VERSION $BUILD_NUMBER $OWNER_NAME $APP_NAME $APP_CENTER_API_TOKEN $IPA "${RELEASE_NOTE}" "${SLACK_WEBHOOKS}"
+  only:
+    - master
+  tags:
+    - docker
