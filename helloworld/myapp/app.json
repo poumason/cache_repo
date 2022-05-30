@@ -1,0 +1,15 @@
+{
+    "id": "fe664495-9dd6-473e-9f3b-c4efb483f666",
+    "version": "0.0.1",
+    "requiredApiVersion": "^1.4.0",
+    "iconFile": "icon.png",
+    "author": {
+        "name": "pou",
+        "homepage": "m/a",
+        "support": "n/a"
+    },
+    "name": "MyApp",
+    "nameSlug": "myapp",
+    "classFile": "MyAppApp.ts",
+    "description": "say hello"
+}
